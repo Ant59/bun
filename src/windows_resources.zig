@@ -504,7 +504,7 @@ pub const ResourceTree = struct {
                 while (lang_iter.next()) |lang_entry| {
                     const resource = &self.resources.items[lang_entry.value_ptr.*];
                     const data_entry = ResourceDataEntry{
-                        .data_rva = virtual_base + data_offset,
+                        .data_rva = virtual_base +% data_offset,
                         .size = @intCast(resource.data.len),
                         .codepage = 0,
                     };
@@ -719,35 +719,69 @@ pub fn buildVersionInfo(allocator: Allocator, version: WindowsVersion, descripti
         @memcpy(buffer.items[string_header_pos..][0..@sizeOf(StringEntryHeader)], std.mem.asBytes(&header));
     }
 
-    // Update headers with proper lengths
-    {
-        // Update StringTable length
-        const string_table_len = buffer.items.len - string_table_start;
-        const string_table_header = StringTableHeader{
-            .length = @intCast(string_table_len),
-            .value_length = 0,
-            .type = 1,
-        };
-        @memcpy(buffer.items[string_table_start..][0..@sizeOf(StringTableHeader)], std.mem.asBytes(&string_table_header));
+    // Update StringTable length
+    const string_table_len = buffer.items.len - string_table_start;
+    const string_table_header = StringTableHeader{
+        .length = @intCast(string_table_len),
+        .value_length = 0,
+        .type = 1,
+    };
+    @memcpy(buffer.items[string_table_start..][0..@sizeOf(StringTableHeader)], std.mem.asBytes(&string_table_header));
 
-        // Update StringFileInfo length
-        const string_file_info_len = buffer.items.len - string_file_info_start;
-        const string_file_info_header = VersionInfoHeader{
-            .length = @intCast(string_file_info_len),
-            .value_length = 0,
-            .type = 1,
-        };
-        @memcpy(buffer.items[string_file_info_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&string_file_info_header));
+    // Update StringFileInfo length
+    const string_file_info_len = buffer.items.len - string_file_info_start;
+    const string_file_info_header = VersionInfoHeader{
+        .length = @intCast(string_file_info_len),
+        .value_length = 0,
+        .type = 1,
+    };
+    @memcpy(buffer.items[string_file_info_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&string_file_info_header));
+    
+    // VarFileInfo - MANDATORY for Windows to recognize version info
+    const var_file_info_start = buffer.items.len;
+    try writer.writeInt(u16, 0, .little); // Length (will be updated)
+    try writer.writeInt(u16, 0, .little); // Value length
+    try writer.writeInt(u16, 1, .little); // Type (1 = text)
+    try writer.writeAll(std.mem.sliceAsBytes(&[_]u16{ 'V', 'a', 'r', 'F', 'i', 'l', 'e', 'I', 'n', 'f', 'o', 0 }));
+    
+    // Align to DWORD
+    while (buffer.items.len % 4 != 0) try writer.writeByte(0);
+    
+    // Translation block
+    const translation_start = buffer.items.len;
+    try writer.writeInt(u16, 0, .little); // Length (will be updated)
+    try writer.writeInt(u16, 4, .little); // Value length (sizeof translation array)
+    try writer.writeInt(u16, 0, .little); // Type (0 = binary)
+    try writer.writeAll(std.mem.sliceAsBytes(&[_]u16{ 'T', 'r', 'a', 'n', 's', 'l', 'a', 't', 'i', 'o', 'n', 0 }));
+    
+    // Align to DWORD
+    while (buffer.items.len % 4 != 0) try writer.writeByte(0);
+    
+    // Translation value (0x0409 = US English, 0x04E4 = Unicode codepage)
+    try writer.writeInt(u16, 0x0409, .little);
+    try writer.writeInt(u16, 0x04E4, .little);
+    
+    // Update Translation block length
+    const translation_len = buffer.items.len - translation_start;
+    std.mem.writeInt(u16, buffer.items[translation_start..][0..2], @intCast(translation_len), .little);
+    
+    // Update VarFileInfo length
+    const var_file_info_len = buffer.items.len - var_file_info_start;
+    const var_file_info_header = VersionInfoHeader{
+        .length = @intCast(var_file_info_len),
+        .value_length = 0,
+        .type = 1,
+    };
+    @memcpy(buffer.items[var_file_info_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&var_file_info_header));
 
-        // Update VS_VERSIONINFO length
-        const total_len = buffer.items.len - vs_versioninfo_start;
-        const version_header = VersionInfoHeader{
-            .length = @intCast(total_len),
-            .value_length = @sizeOf(VS_FIXEDFILEINFO),
-            .type = 0,
-        };
-        @memcpy(buffer.items[vs_versioninfo_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&version_header));
-    }
+    // Update VS_VERSIONINFO length
+    const total_len = buffer.items.len - vs_versioninfo_start;
+    const final_version_header = VersionInfoHeader{
+        .length = @intCast(total_len),
+        .value_length = @sizeOf(VS_FIXEDFILEINFO),
+        .type = 0,
+    };
+    @memcpy(buffer.items[vs_versioninfo_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&final_version_header));
 
     return buffer.toOwnedSlice();
 }
@@ -849,8 +883,8 @@ pub fn parseWindowsVersion(str: []const u8) !WindowsVersion {
     };
 }
 
-/// Edit Windows resources in an executable
-pub fn editWindowsResources(allocator: Allocator, fd: bun.FileDescriptor, settings: *const bun.options.WindowsSettings) !void {
+/// Edit Windows resources in an executable  
+pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settings: *const bun.options.WindowsSettings) !void {
     // Create resource tree
     var resource_tree = ResourceTree.init(allocator);
     defer resource_tree.deinit();
@@ -917,21 +951,30 @@ pub fn editWindowsResources(allocator: Allocator, fd: bun.FileDescriptor, settin
     var resource_stream = std.io.fixedBufferStream(resource_data);
     try resource_tree.write(resource_stream.writer(), 0);
     
+    // Create a temporary output path
+    const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
+    defer allocator.free(tmp_path);
+    
+    // Use updateResourceSection to patch the PE file's resources
+    try @import("pe.zig").PEFile.updateResourceSection(allocator, path, tmp_path, resource_data);
+    
+    // Replace the original file with the updated one
+    try std.fs.cwd().rename(tmp_path, path);
+}
+
+/// Edit Windows resources in an executable (fd variant)
+pub fn editWindowsResources(allocator: Allocator, fd: bun.FileDescriptor, settings: *const bun.options.WindowsSettings) !void {
     // Get the file path from fd
     var path_buf: bun.PathBuffer = undefined;
     const path = fd.getFdPath(&path_buf) catch {
         return error.FailedToGetPath;
     };
     
-    // Create a temporary output path
-    const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
-    defer allocator.free(tmp_path);
+    // Close the fd first since we need to modify the file
+    fd.close();
     
-    // Use rebuildWithResources to properly rebuild the PE file
-    try @import("pe.zig").PEFile.rebuildWithResources(allocator, path, tmp_path, resource_data);
-    
-    // Replace the original file with the rebuilt one
-    try std.fs.cwd().rename(tmp_path, path);
+    // Call the path-based version
+    try editWindowsResourcesByPath(allocator, path, settings);
 }
 
 const ParsedResources = struct {
@@ -957,7 +1000,7 @@ pub fn parseResourceSection(allocator: Allocator, data: []const u8, virtual_base
 
     // Parse root directory
     const root_dir = try parseDirectoryTable(reader);
-    const root_entries = try allocator.alloc(ResourceDirectoryEntry, root_dir.number_of_name_entries + root_dir.number_of_id_entries);
+    const root_entries = try allocator.alloc(ResourceDirectoryEntry, @as(u32, root_dir.number_of_name_entries) +% @as(u32, root_dir.number_of_id_entries));
     defer allocator.free(root_entries);
 
     for (root_entries) |*entry| {
@@ -979,7 +1022,7 @@ pub fn parseResourceSection(allocator: Allocator, data: []const u8, virtual_base
             // Seek to subdirectory
             try stream.seekTo(type_entry.offset.address);
             const name_dir = try parseDirectoryTable(reader);
-            const name_entries = try allocator.alloc(ResourceDirectoryEntry, name_dir.number_of_name_entries + name_dir.number_of_id_entries);
+            const name_entries = try allocator.alloc(ResourceDirectoryEntry, @as(u32, name_dir.number_of_name_entries) +% @as(u32, name_dir.number_of_id_entries));
             defer allocator.free(name_entries);
 
             for (name_entries) |*entry| {
@@ -992,7 +1035,7 @@ pub fn parseResourceSection(allocator: Allocator, data: []const u8, virtual_base
                 // Seek to language subdirectory
                 try stream.seekTo(name_entry.offset.address);
                 const lang_dir = try parseDirectoryTable(reader);
-                const lang_entries = try allocator.alloc(ResourceDirectoryEntry, lang_dir.number_of_name_entries + lang_dir.number_of_id_entries);
+                const lang_entries = try allocator.alloc(ResourceDirectoryEntry, @as(u32, lang_dir.number_of_name_entries) +% @as(u32, lang_dir.number_of_id_entries));
                 defer allocator.free(lang_entries);
 
                 for (lang_entries) |*entry| {
@@ -1007,8 +1050,8 @@ pub fn parseResourceSection(allocator: Allocator, data: []const u8, virtual_base
                     const data_entry = try parseDataEntry(reader);
 
                     // Extract actual data
-                    const data_offset = data_entry.data_rva - virtual_base;
-                    if (data_offset >= data.len or data_offset + data_entry.size > data.len) continue;
+                    const data_offset = data_entry.data_rva -% virtual_base;
+                    if (data_offset >= data.len or data_offset +% data_entry.size > data.len) continue;
 
                     const resource_data = data[data_offset..][0..data_entry.size];
 
