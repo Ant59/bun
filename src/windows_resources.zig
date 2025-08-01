@@ -1,12 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const Allocator = std.mem.Allocator;
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const CallFrame = jsc.CallFrame;
-
 /// Windows PE resource types
 pub const RT = enum(u16) {
     CURSOR = 1,
@@ -57,7 +48,7 @@ pub const NameOrOrdinal = union(enum) {
             .ordinal => 4, // 0xFFFF + ordinal value
         };
     }
-    
+
     pub fn hash(self: NameOrOrdinal) u32 {
         var hasher = std.hash.Wyhash.init(0);
         switch (self) {
@@ -72,7 +63,7 @@ pub const NameOrOrdinal = union(enum) {
         }
         return @truncate(hasher.final());
     }
-    
+
     pub fn eql(a: NameOrOrdinal, b: NameOrOrdinal) bool {
         return switch (a) {
             .name => |a_name| switch (b) {
@@ -159,10 +150,10 @@ pub const ResourceDirectoryEntry = extern struct {
         try writer.writeInt(u32, @bitCast(self.entry), .little);
         try writer.writeInt(u32, @bitCast(self.offset), .little);
     }
-    
+
     pub fn create(id_or_name: NameOrOrdinal, offset: u32, is_dir: bool, string_offsets: []const u31, getStringIndex: anytype) ResourceDirectoryEntry {
         const entry_value = switch (id_or_name) {
-            .name => |_| packed union { 
+            .name => |_| packed union {
                 name_offset: packed struct(u32) {
                     address: u31,
                     to_string: bool = true,
@@ -177,7 +168,7 @@ pub const ResourceDirectoryEntry = extern struct {
                 integer_id: u32,
             }{ .integer_id = id },
         };
-        
+
         return .{
             .entry = entry_value,
             .offset = .{
@@ -240,12 +231,12 @@ pub const ResourceTree = struct {
             type_entry.value_ptr.deinit(self.allocator);
         }
         self.type_to_name_map.deinit(self.allocator);
-        
+
         for (self.string_table.items) |*name| {
             name.deinit(self.allocator);
         }
         self.string_table.deinit(self.allocator);
-        
+
         for (self.resources.items) |*resource| {
             resource.deinit(self.allocator);
         }
@@ -366,7 +357,7 @@ pub const ResourceTree = struct {
     /// Write the resource section - PASS 2
     pub fn write(self: *const ResourceTree, writer: anytype, virtual_base: u32) !void {
         const lengths = self.calculateLayout();
-        
+
         // Pre-calculate all string offsets
         var string_offsets = try self.allocator.alloc(u31, self.string_table.items.len);
         defer self.allocator.free(string_offsets);
@@ -694,21 +685,21 @@ pub fn buildVersionInfo(allocator: Allocator, version: WindowsVersion, descripti
         const string_start = buffer.items.len;
         const string_header_pos = buffer.items.len;
         try writer.writeStruct(StringEntryHeader{ .length = 0, .value_length = 0, .type = 1 });
-        
+
         // Write key as UTF-16
         const key_utf16 = try std.unicode.utf8ToUtf16LeAlloc(allocator, entry.key);
         defer allocator.free(key_utf16);
         try writer.writeAll(std.mem.sliceAsBytes(key_utf16));
         try writer.writeInt(u16, 0, .little); // Null terminator
         while (buffer.items.len % 4 != 0) try writer.writeByte(0);
-        
+
         // Write value as UTF-16
         const value_utf16 = try std.unicode.utf8ToUtf16LeAlloc(allocator, entry.value);
         defer allocator.free(value_utf16);
         try writer.writeAll(std.mem.sliceAsBytes(value_utf16));
         try writer.writeInt(u16, 0, .little); // Null terminator
         while (buffer.items.len % 4 != 0) try writer.writeByte(0);
-        
+
         // Update string entry header
         const string_len = buffer.items.len - string_start;
         const header = StringEntryHeader{
@@ -736,35 +727,35 @@ pub fn buildVersionInfo(allocator: Allocator, version: WindowsVersion, descripti
         .type = 1,
     };
     @memcpy(buffer.items[string_file_info_start..][0..@sizeOf(VersionInfoHeader)], std.mem.asBytes(&string_file_info_header));
-    
+
     // VarFileInfo - MANDATORY for Windows to recognize version info
     const var_file_info_start = buffer.items.len;
     try writer.writeInt(u16, 0, .little); // Length (will be updated)
     try writer.writeInt(u16, 0, .little); // Value length
     try writer.writeInt(u16, 1, .little); // Type (1 = text)
     try writer.writeAll(std.mem.sliceAsBytes(&[_]u16{ 'V', 'a', 'r', 'F', 'i', 'l', 'e', 'I', 'n', 'f', 'o', 0 }));
-    
+
     // Align to DWORD
     while (buffer.items.len % 4 != 0) try writer.writeByte(0);
-    
+
     // Translation block
     const translation_start = buffer.items.len;
     try writer.writeInt(u16, 0, .little); // Length (will be updated)
     try writer.writeInt(u16, 4, .little); // Value length (sizeof translation array)
     try writer.writeInt(u16, 0, .little); // Type (0 = binary)
     try writer.writeAll(std.mem.sliceAsBytes(&[_]u16{ 'T', 'r', 'a', 'n', 's', 'l', 'a', 't', 'i', 'o', 'n', 0 }));
-    
+
     // Align to DWORD
     while (buffer.items.len % 4 != 0) try writer.writeByte(0);
-    
+
     // Translation value (0x0409 = US English, 0x04E4 = Unicode codepage)
     try writer.writeInt(u16, 0x0409, .little);
     try writer.writeInt(u16, 0x04E4, .little);
-    
+
     // Update Translation block length
     const translation_len = buffer.items.len - translation_start;
     std.mem.writeInt(u16, buffer.items[translation_start..][0..2], @intCast(translation_len), .little);
-    
+
     // Update VarFileInfo length
     const var_file_info_len = buffer.items.len - var_file_info_start;
     const var_file_info_header = VersionInfoHeader{
@@ -867,14 +858,14 @@ pub const WindowsVersion = struct {
 /// Parse Windows version string (e.g., "1.2.3.4")
 pub fn parseWindowsVersion(str: []const u8) !WindowsVersion {
     var parts_iter = std.mem.tokenizeScalar(u8, str, '.');
-    
+
     const major_str = parts_iter.next() orelse return error.InvalidVersionFormat;
     const minor_str = parts_iter.next() orelse return error.InvalidVersionFormat;
     const patch_str = parts_iter.next() orelse return error.InvalidVersionFormat;
     const build_str = parts_iter.next() orelse return error.InvalidVersionFormat;
-    
+
     if (parts_iter.next() != null) return error.InvalidVersionFormat;
-    
+
     return WindowsVersion{
         .major = std.fmt.parseInt(u16, major_str, 10) catch return error.InvalidVersionFormat,
         .minor = std.fmt.parseInt(u16, minor_str, 10) catch return error.InvalidVersionFormat,
@@ -883,19 +874,19 @@ pub fn parseWindowsVersion(str: []const u8) !WindowsVersion {
     };
 }
 
-/// Edit Windows resources in an executable  
+/// Edit Windows resources in an executable
 pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settings: *const bun.options.WindowsSettings) !void {
     // Create resource tree
     var resource_tree = ResourceTree.init(allocator);
     defer resource_tree.deinit();
-    
+
     // Add icon if provided
     if (settings.icon) |icon_path| {
         const icon_data = std.fs.cwd().readFileAlloc(allocator, icon_path, 10 * 1024 * 1024) catch |err| {
             return if (err == error.FileNotFound) error.InvalidIconFile else err;
         };
         defer allocator.free(icon_data);
-        
+
         const parsed_icon = try parseIconFileImpl(allocator, icon_data);
         defer allocator.free(parsed_icon.group_icon_data);
         defer {
@@ -904,7 +895,7 @@ pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settin
             }
             allocator.free(parsed_icon.icons);
         }
-        
+
         // Add individual icons
         for (parsed_icon.icons) |icon| {
             const resource = Resource{
@@ -915,7 +906,7 @@ pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settin
             };
             try resource_tree.addResource(resource);
         }
-        
+
         // Add group icon
         const group_resource = Resource{
             .type_value = .{ .ordinal = @intFromEnum(RT.GROUP_ICON) },
@@ -925,15 +916,15 @@ pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settin
         };
         try resource_tree.addResource(group_resource);
     }
-    
+
     // Add version info if any version-related settings are provided
     if (settings.version != null or settings.description != null) {
         const version = if (settings.version) |v| try parseWindowsVersion(v) else WindowsVersion{ .major = 1, .minor = 0, .patch = 0, .build = 0 };
         const description = settings.description orelse "";
-        
+
         const version_data = try buildVersionInfo(allocator, version, description);
         defer allocator.free(version_data);
-        
+
         const version_resource = Resource{
             .type_value = .{ .ordinal = @intFromEnum(RT.VERSION) },
             .name_value = .{ .ordinal = 1 },
@@ -942,22 +933,22 @@ pub fn editWindowsResourcesByPath(allocator: Allocator, path: []const u8, settin
         };
         try resource_tree.addResource(version_resource);
     }
-    
+
     // Calculate resource data
     const lengths = resource_tree.calculateLayout();
     const resource_data = try allocator.alloc(u8, lengths.total);
     defer allocator.free(resource_data);
-    
+
     var resource_stream = std.io.fixedBufferStream(resource_data);
     try resource_tree.write(resource_stream.writer(), 0);
-    
+
     // Create a temporary output path
     const tmp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
     defer allocator.free(tmp_path);
-    
+
     // Use updateResourceSection to patch the PE file's resources
-    try @import("pe.zig").PEFile.updateResourceSection(allocator, path, tmp_path, resource_data);
-    
+    try @import("./pe.zig").PEFile.updateResourceSection(allocator, path, tmp_path, resource_data);
+
     // Replace the original file with the updated one
     try std.fs.cwd().rename(tmp_path, path);
 }
@@ -969,10 +960,10 @@ pub fn editWindowsResources(allocator: Allocator, fd: bun.FileDescriptor, settin
     const path = fd.getFdPath(&path_buf) catch {
         return error.FailedToGetPath;
     };
-    
+
     // Close the fd first since we need to modify the file
     fd.close();
-    
+
     // Call the path-based version
     try editWindowsResourcesByPath(allocator, path, settings);
 }
@@ -981,7 +972,7 @@ const ParsedResources = struct {
     icons: []const IconData,
     group_icons: []const IconData,
     version_info: ?[]u8,
-    
+
     const IconData = struct { id: u16, data: []u8 };
 };
 
@@ -1146,7 +1137,7 @@ pub const TestingAPIs = struct {
 
         const obj = JSValue.createEmptyObject(globalThis, 2);
         obj.put(globalThis, "groupIconData", try jsc.ArrayBuffer.fromBytes(result.group_icon_data, .Uint8Array).toJS(globalThis));
-        
+
         const icons_array = try JSValue.createEmptyArray(globalThis, result.icons.len);
         for (result.icons, 0..) |icon, i| {
             const icon_obj = JSValue.createEmptyObject(globalThis, 2);
@@ -1170,10 +1161,10 @@ pub const TestingAPIs = struct {
         };
 
         const allocator = bun.default_allocator;
-        
+
         // Parse PE file to find resource section
         var stream = std.io.fixedBufferStream(exe_data.slice());
-        const pe_file = @import("pe.zig").PEFile.parse(allocator, stream.reader()) catch |err| {
+        const pe_file = @import("./pe.zig").PEFile.parse(allocator, stream.reader()) catch |err| {
             return globalThis.throwError(err, "Failed to parse PE file");
         };
         defer pe_file.deinit();
@@ -1253,7 +1244,7 @@ pub const TestingAPIs = struct {
                 const fixed_data = data[offset..][0..@sizeOf(VS_FIXEDFILEINFO)];
                 const file_version_ms = std.mem.readInt(u32, fixed_data[8..12], .little);
                 const file_version_ls = std.mem.readInt(u32, fixed_data[12..16], .little);
-                
+
                 const version_str = std.fmt.allocPrint(bun.default_allocator, "{d}.{d}.{d}.{d}", .{
                     file_version_ms >> 16,
                     file_version_ms & 0xFFFF,
@@ -1261,7 +1252,7 @@ pub const TestingAPIs = struct {
                     file_version_ls & 0xFFFF,
                 }) catch return JSValue.null;
                 defer bun.default_allocator.free(version_str);
-                
+
                 obj.put(globalThis, "fileVersion", try bun.String.createUTF8ForJS(globalThis, version_str));
             }
         }
@@ -1278,7 +1269,7 @@ pub const TestingAPIs = struct {
     fn findFixedFileInfo(data: []const u8) ?usize {
         const signature: u32 = 0xFEEF04BD;
         if (data.len < @sizeOf(VS_FIXEDFILEINFO)) return null;
-        
+
         // Scan for the signature
         var i: usize = 0;
         while (i <= data.len - 4) : (i += 4) {
@@ -1293,12 +1284,12 @@ pub const TestingAPIs = struct {
         // This is a simplified version string finder
         // In reality, version info has a complex structure with nested blocks
         // For testing purposes, we just search for the key as UTF-16 and extract the value
-        
+
         // Convert key to UTF-16
         var key_utf16_buf: [256]u16 = undefined;
         const key_utf16_len = std.unicode.utf8ToUtf16Le(&key_utf16_buf, key) catch return null;
         const key_utf16 = key_utf16_buf[0..key_utf16_len];
-        
+
         // Search for the key
         var i: usize = 0;
         while (i < data.len - key_utf16.len * 2 - 2) : (i += 2) {
@@ -1306,16 +1297,16 @@ pub const TestingAPIs = struct {
             if (std.mem.eql(u16, @alignCast(potential_key), key_utf16)) {
                 // Found key, skip past it and any padding/header
                 var value_start = i + key_utf16.len * 2;
-                
+
                 // Skip null terminator and padding
                 while (value_start < data.len - 2 and data[value_start] == 0) : (value_start += 1) {}
-                
+
                 // Read until null terminator
                 var value_end = value_start;
                 while (value_end < data.len - 1) : (value_end += 2) {
                     if (data[value_end] == 0 and data[value_end + 1] == 0) break;
                 }
-                
+
                 if (value_end > value_start) {
                     // Convert UTF-16 to UTF-8
                     const utf16_data = std.mem.bytesAsSlice(u16, data[value_start..value_end]);
@@ -1328,7 +1319,18 @@ pub const TestingAPIs = struct {
                 }
             }
         }
-        
+
         return null;
     }
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

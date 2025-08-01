@@ -627,12 +627,12 @@ pub const StandaloneModuleGraph = struct {
                 cleanup(zname, fd);
                 Global.exit(1);
             };
-            
+
             // Ensure the file has proper permissions after copying
             if (comptime !Environment.isWindows) {
                 _ = bun.c.fchmod(fd.native(), 0o644);
             }
-            
+
             break :brk fd;
         };
 
@@ -690,8 +690,8 @@ pub const StandaloneModuleGraph = struct {
             },
             .windows => {
                 // Implement .bun section support for Windows executables
-                const pe_module = @import("pe.zig");
-                
+                const pe_module = @import("./pe.zig");
+
                 // Get the path from fd
                 var path_buf: bun.PathBuffer = undefined;
                 const path = cloned_executable_fd.getFdPath(&path_buf) catch |err| {
@@ -699,10 +699,10 @@ pub const StandaloneModuleGraph = struct {
                     cleanup(zname, cloned_executable_fd);
                     Global.exit(1);
                 };
-                
+
                 // We need to close the fd before modifying the file
                 cloned_executable_fd.close();
-                
+
                 // Create temporary path for PE with .bun section
                 const tmp_path = std.fmt.allocPrint(bun.default_allocator, "{s}.bun.tmp", .{path}) catch |err| {
                     Output.prettyErrorln("Error allocating temporary path: {}", .{err});
@@ -710,21 +710,21 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 };
                 defer bun.default_allocator.free(tmp_path);
-                
+
                 // Add .bun section to PE file
                 pe_module.PEFile.addBunSection(bun.default_allocator, path, tmp_path, bytes) catch |err| {
                     Output.prettyErrorln("Error adding .bun section to PE file: {}", .{err});
                     std.fs.cwd().deleteFile(path) catch {};
                     Global.exit(1);
                 };
-                
+
                 // Move temporary file to final location
                 std.fs.cwd().rename(tmp_path, path) catch |err| {
                     Output.prettyErrorln("Error renaming temporary file: {}", .{err});
                     std.fs.cwd().deleteFile(tmp_path) catch {};
                     Global.exit(1);
                 };
-                
+
                 // Reopen the modified file
                 var path_z_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const path_z = std.fmt.bufPrintZ(&path_z_buf, "{s}", .{path}) catch {
@@ -738,10 +738,10 @@ pub const StandaloneModuleGraph = struct {
                         Global.exit(1);
                     },
                 };
-                
+
                 // Set executable permissions
                 _ = bun.c.fchmod(modified_fd.native(), 0o777);
-                
+
                 return modified_fd;
             },
             else => {

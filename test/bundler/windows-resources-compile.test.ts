@@ -435,11 +435,11 @@ describe("Windows Resource Editing", () => {
       });
 
       const invalidVersions = [
-        "1",        // too few parts
-        "1.2",      // too few parts
-        "1.2.3",    // too few parts
+        "1", // too few parts
+        "1.2", // too few parts
+        "1.2.3", // too few parts
         "1.2.3.4.5", // too many parts
-        "a.b.c.d",  // non-numeric
+        "a.b.c.d", // non-numeric
         "1.2.3.-1", // negative number
         "65536.0.0.0", // overflow
       ];
@@ -505,10 +505,7 @@ describe("Windows Resource Editing", () => {
           stdout: "pipe",
         });
 
-        const [stdout, exitCode] = await Promise.all([
-          new Response(runProc.stdout).text(),
-          runProc.exited,
-        ]);
+        const [stdout, exitCode] = await Promise.all([new Response(runProc.stdout).text(), runProc.exited]);
 
         expect(exitCode).toBe(0);
         expect(stdout.trim()).toBe("Running with resources!");

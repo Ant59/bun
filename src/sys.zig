@@ -2340,7 +2340,7 @@ pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: c_int) Maybe(usize) {
         }
         return Maybe(usize){ .result = @as(usize, @intCast(new_ptr)) };
     }
-    
+
     while (true) {
         const rc = switch (Environment.os) {
             .linux => syscall.lseek(fd.cast(), offset, @as(usize, @intCast(whence))),
